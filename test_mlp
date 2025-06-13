@@ -1,0 +1,72 @@
+n [1]:  In [1]:
+import mlatom as ml
+import numpy as np
+import matplotlib.pyplot as plt
+In [2]:  In [2]:
+# prepare H2 geometries with bond lengths ranging from 0.5 to 5.0 Å
+xyz = np.zeros((451, 2, 3))
+xyz[:, 1, 2] = np.arange(0.5, 5.01, 0.01)
+z = np.ones((451, 2)).astype(int)
+molDB = ml.molecular_database.from_numpy(coordinates=xyz, species=z)
+In [3]:  In [3]:
+# calculate HF energies
+hf = ml.models.methods(method='HF/STO-3G', program='PySCF')
+hf.predict(molecular_database=molDB, calculate_energy=True, calculate_energy_gradients=True)
+In [4]:  In [4]:
+Ntrain = 100
+trainDB, testDB = molDB.split(sampling='random', number_of_splits=2, fraction_of_points_in_splits=[Ntrain/451, 1-Ntrain/451])
+In [5]:  In [5]:
+subtrainDB, valDB = trainDB.split(sampling='random', number_of_splits=2, fraction_of_points_in_splits=[0.9, 0.1])
+In [6]:  In [6]:
+len(valDB)
+Out[6]:
+10
+In [7]:  In [7]:
+# setup the KREG model
+kreg = ml.models.kreg(model_file='KREG.npz', ml_program='KREG_API')
+# optimize its hyperparameters
+kreg.hyperparameters['sigma'].minval = 2**-5 # modify the default lower bound of the hyperparameter sigma
+kreg.optimize_hyperparameters(subtraining_molecular_database=subtrainDB,       
+                              validation_molecular_database=valDB,
+                              optimization_algorithm='grid',
+                              hyperparameters=['lambda', 'sigma'],
+                              training_kwargs={'property_to_learn': 'energy'},
+                              prediction_kwargs={'property_to_predict': 'estimated_energy'})
+lmbd = kreg.hyperparameters['lambda'].value ; sigma=kreg.hyperparameters['sigma'].value
+valloss = kreg.validation_loss
+print('Optimized sigma:', sigma)
+print('Optimized lambda:', lmbd)
+print('Optimized validation loss:', valloss)
+# Train the model with the optimized hyperparameters to dump it to disk.
+kreg.train(molecular_database=subtrainDB, property_to_learn='energy')
+Optimized sigma: 0.35355339059327373
+Optimized lambda: 2.9103830456733704e-11
+Optimized validation loss: 6.572634410902242e-05
+In [8]:  In [8]:
+# predict with the energy-only KREG model
+kreg.predict(molecular_database=molDB, property_to_predict='estimated_energy', xyz_derivative_property_to_predict='estimated_gradients')
+In [9]:  In [9]:
+testRMSE_E = ml.stats.rmse(testDB.get_properties('energy'), testDB.get_properties('estimated_energy'))*ml.constants.Hartree2kcalpermol
+testRMSE_F = ml.stats.rmse(testDB.get_xyz_vectorial_properties('energy_gradients').flatten(), testDB.get_xyz_vectorial_properties('estimated_gradients').flatten())*ml.constants.Hartree2kcalpermol
+In [10]:
+print(f'Test RMSE for energies: {testRMSE_E} Hartree')
+print(f'Test RMSE for forces: {testRMSE_F} Hartree/Angstrom')
+Test RMSE for energies: 0.22932993920676076 Hartree
+Test RMSE for forces: 12.79063992200692 Hartree/Angstrom
+In [11]:  In [11]:
+values = testDB.get_properties('energy')
+estimated_values = testDB.get_properties('estimated_energy')
+In [12]:  In [12]:
+fig,ax = plt.subplots() 
+fig.set_size_inches(15,12)
+diagonal_line = [min([min(values),min(estimated_values)]),max([max(values),max(estimated_values)])]
+ax.plot(diagonal_line,diagonal_line,color='C3')
+#ax.scatter(values[0:Nsubtrain],estimated_values[0:Nsubtrain],color='C0',label='subtraining points')
+#ax.scatter(values[Nsubtrain:Ntrain],estimated_values[Nsubtrain:Ntrain],color='C1',label='validation points')
+ax.scatter(values,estimated_values,color='C0',label='test points')
+ax.set_xlabel(f'Energy (Hartree)')
+ax.set_ylabel(f'Estimated energy (Hartree)')
+plt.suptitle(f'MLP model (energies)')
+plt.legend()
+Out[12]:
+<matplotlib.legend.Legend at 0x2ad5c7f5f910>
