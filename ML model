@@ -1,0 +1,19 @@
+import mlatom as ml
+import numpy as np
+
+# load data set
+molDB = ml.data.molecular_database.from_xyz_file('h2.xyz')
+# molDB.add_scalar_properties_from_file('materials/E_FCI_451.dat', 'energy')
+# above will work, but it might be more intuitive to add properties explicitly:
+energies = np.loadtxt('E_FCI_451.dat')
+for i, mol in enumerate(molDB):
+    mol.energy = energies[i]
+# check visually the data set if you want (rotate the H2 molecule or you will see just the top atom)
+molDB.view()
+# define the model
+model = ml.models.kreg(model_file='energies.npz')
+# let's skip hyperparameter optimization here (it can be done as shown in dedicated tutorials):
+model.hyperparameters["sigma"].value  = 0.14844495825918
+model.hyperparameters["lambda"].value = 0.00000000000052
+# train the model
+model.train(molecular_database=molDB, property_to_learn='energy')
